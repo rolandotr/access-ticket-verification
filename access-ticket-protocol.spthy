@@ -1,0 +1,143 @@
+theory access_ticket
+begin
+
+builtins: signing, symmetric-encryption, hashing
+
+
+// Public key infrastructure
+rule Register_pk_and_ticket:
+[ 
+    Fr(~ltkA),   //Given a fresh long-term key 
+    Fr(~psidA),   //and a fresh pseudo-identifier 
+]--[
+    Once($a),   //signal that $a should be setup only once
+]->
+[ 
+    !Ltk($a, ~ltkA), //establish that agent $a has secret key ~ltkA
+    !Pk($a, pk(~ltkA)), //and that pk(~ltkA) is the corresponding public key 
+    !Psid($a, ~psidA), //and that agent $a has pseudo-identifier ~psidA
+    Out(pk(~ltkA)), //and that the public key is available on the network 
+] 
+
+
+/* 
+Prover self-generates an access ticket
+*/
+rule P_0_generate:
+let ticket = <~n, 'tP', 'lP', psidP, 'cat'> in 
+[ 
+    !Ltk(p, ltkP),  //given a prover p with with a secret key ltkP 
+    !Psid(p, psidP), //and pseudo-identifer  
+    Fr(~n),    //and given a fresh nonce ~n
+] 
+--[ 
+    AccessTicketGenerated(p, ticket),   //signal that $p generated a ticket
+]->
+[ 
+    !AccessTicket(p, ticket), //establish that p generated a ticket  
+]
+
+
+/* 
+Verifier sends first message
+*/
+rule V_1_send:
+let msg = <~m, 'tV', 'lV'> //where time and location are treated as public constants
+in 
+[ 
+    Fr(~m),    //given a fresh nonce m 
+    !Ltk(v, ltkV),  //and a verifier with a secret key ltkV 
+]
+--[ 
+    SessionStarted(v, ~m),     //signal that v started a session with nonce m 
+]->
+[ 
+    VerifierSession(v, ~m), //establish that v started a session with nonce m  
+    Out(<msg,sign(msg,ltkV)>),  //send msg signed with ltkV 
+]
+
+
+
+/*
+Prover responds to the verifier's request
+*/
+rule P_1_receive:
+let 
+    ticket = <n, 'tP', 'lP', psidP, 'cat'>
+    msgIn = <m, 'tV', 'lV'> 
+    msgOut1 = <m, 'tV', 'lV', 'tP', 'lP'>
+    msgOut2 = <m, n, ticket>
+    key = h(m, n)
+in 
+[ 
+    !Ltk(p, ltkP),  //given a prover p with secret ltkP 
+    !AccessTicket(p, ticket),  //that has generated a ticket 
+    !Pk(v, pkV),    //and a verifier with public key pkV
+    In(<msgIn,sig>),    //and a signed message msgIn  
+]
+--[ 
+    Recv(p, m, n),     //signal that p received nonce m and responded with n
+    ProverAgree(p,v,<m,n,ticket>), //signal the p expects agreement on ticket with v 
+    Eq(verify(sig,msgIn,pkV),true), //ensure that the signature is correct
+]->
+[ 
+    Out(<msgOut1, sign(msgOut1, ltkP)>),    //send response
+    Out(<n, senc(<msgOut2, sign(msgOut2, ltkP)>, key)>) ////send ticket
+]
+
+
+/*
+Verifier receives a response and claim agreement with the ticket.  
+*/
+rule V_1_receive:
+let 
+    ticket = <n, 'tP', 'lP', psidP, 'cat'>
+    msgIn1 = <m, 'tV', 'lV', 'tP', 'lP'>
+    msgIn2 = <m, n, ticket>
+    key = h(m, n)
+in 
+[ 
+    VerifierSession(v, m), //given a session started by v  
+    !Ltk(v, ltkV),  //which has secret ltkV 
+    !Pk(p, pkP),    //given a prover with public key pkP
+    In(<msgIn1, sig1>), // and the reception of a signed response to the verifier's request
+    In(<n, senc(<msgIn2, sig2>, key)>) // and the reception of a ticket
+]
+--[
+    VerifierAgree(v,p,<m,n,ticket>),  //signal that v agrees on ticket with p
+    Eq(verify(sig1,msgIn1,pkP),true), //ensure that the signature is correct
+    Eq(verify(sig2,msgIn2,pkP),true), //ensure that the signature is correct
+]->
+[ 
+]
+
+restriction Equality:
+"All x y #i. Eq(x,y) @i ==> x = y"
+
+restriction unique:
+"All x #i #j. Once(x) @#i & Once(x) @#j ==> #i = #j"
+
+/*
+A sanity check to ensure that the protcol runs.
+*/
+lemma executable:
+exists-trace
+"Ex p v m n ticket #i #j #k. 
+    AccessTicketGenerated(p, ticket)@i 
+    & 
+    Recv(p, m, n)@j
+    &
+    VerifierAgree(v,p,<m, n, ticket>)@k
+"
+
+/*
+V claims non-injective agreement with P on
+the ticket
+*/
+lemma noninjective_agreement:
+"All v p m n ticket #i.
+    VerifierAgree(v,p,<m, n, ticket>) @i
+        ==> (Ex #j. ProverAgree(p,v,<m, n, ticket>) @j)
+ "
+
+end
