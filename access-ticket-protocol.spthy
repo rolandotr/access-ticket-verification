@@ -1,4 +1,15 @@
 theory access_ticket
+/************************************************************/
+/* Conventions:                                             */
+/*    - A prover in this theory corresponds to a            */
+/*      vehicle (V) in the article.                         */
+/*    - A verifier in this theory corresponds to an         */
+/*      access control vehicle (ACV) in the article.        */
+/*    - Timestamps and locations are either treated as      */
+/*      constants or ignored.                               */
+/*    - A secure channel Out_S and In_S is used to model    */
+/*      the TLS secure channel established by V and P.      */
+/************************************************************/
 begin
 
 builtins: signing, symmetric-encryption, hashing
@@ -42,7 +53,7 @@ let ticket = <~n, 'tP', 'lP', psidP, 'cat'> in
 Verifier sends first message
 */
 rule V_1_send:
-let msg = <~m, 'tV', 'lV'> //where time and location are treated as public constants
+let da = <~m, 'tV', 'lV'> //where time and location are treated as public constants
 in 
 [ 
     Fr(~m),    //given a fresh nonce m 
@@ -52,37 +63,37 @@ in
     SessionStarted(v, ~m),     //signal that v started a session with nonce m 
 ]->
 [ 
-    VerifierSession(v, ~m), //establish that v started a session with nonce m  
-    Out(<msg,sign(msg,ltkV)>),  //send msg signed with ltkV 
+    VerifierSession(v, da, sign(da,ltkV)), //establish that v started a session 
+                                           //with detection announcement da  
+    Out(<da,sign(da,ltkV)>),  //send msg signed with ltkV 
 ]
 
 
 
 /*
-Prover responds to the verifier's request
+Prover receives a detection announcement from an open channel. 
+Prover responds via a secure channel.
 */
 rule P_1_receive:
 let 
     ticket = <n, 'tP', 'lP', psidP, 'cat'>
-    msgIn = <m, 'tV', 'lV'> 
-    msgOut1 = <m, 'tV', 'lV', 'tP', 'lP'>
-    msgOut2 = <m, n, ticket>
-    key = h(m, n)
+    da = <m, 'tV', 'lV'> 
+    ep = <ticket, sig>
 in 
 [ 
     !Ltk(p, ltkP),  //given a prover p with secret ltkP 
     !AccessTicket(p, ticket),  //that has generated a ticket 
     !Pk(v, pkV),    //and a verifier with public key pkV
-    In(<msgIn,sig>),    //and a signed message msgIn  
+    In(<da,sig>),    //and a signed detection announcement 
 ]
 --[ 
     Recv(p, m, n),     //signal that p received nonce m and responded with n
-    ProverAgree(p,v,<m,n,ticket>), //signal the p expects agreement on ticket with v 
-    Eq(verify(sig,msgIn,pkV),true), //ensure that the signature is correct
+    ProverAgree(p,v,ticket), //signal the p expects agreement on ticket with v 
+    Eq(verify(sig,da,pkV),true), //ensure that the detection announcement is correctly signed. 
+    Secret(ticket), //signal the ticket should remain secret
 ]->
 [ 
-    Out(<msgOut1, sign(msgOut1, ltkP)>),    //send response
-    Out(<n, senc(<msgOut2, sign(msgOut2, ltkP)>, key)>) ////send ticket
+    Out_S(p, v, <ep, sign(ep, ltkP)>) //send encounter proof signed 
 ]
 
 
@@ -92,21 +103,19 @@ Verifier receives a response and claim agreement with the ticket.
 rule V_1_receive:
 let 
     ticket = <n, 'tP', 'lP', psidP, 'cat'>
-    msgIn1 = <m, 'tV', 'lV', 'tP', 'lP'>
-    msgIn2 = <m, n, ticket>
-    key = h(m, n)
+    da = <m, 'tV', 'lV'>
+    ep = <ticket, sign(da,ltkV)>
+    msgIn = <ep, sig>
 in 
 [ 
-    VerifierSession(v, m), //given a session started by v  
+    VerifierSession(v, da, sign(da,ltkV)), //given a session started by v  
     !Ltk(v, ltkV),  //which has secret ltkV 
     !Pk(p, pkP),    //given a prover with public key pkP
-    In(<msgIn1, sig1>), // and the reception of a signed response to the verifier's request
-    In(<n, senc(<msgIn2, sig2>, key)>) // and the reception of a ticket
+    In_S(p, v, <ep, sig>) // and the reception of a encounter proof
 ]
 --[
-    VerifierAgree(v,p,<m,n,ticket>),  //signal that v agrees on ticket with p
-    Eq(verify(sig1,msgIn1,pkP),true), //ensure that the signature is correct
-    Eq(verify(sig2,msgIn2,pkP),true), //ensure that the signature is correct
+    VerifierAgree(v,p,ticket),  //signal that v agrees on ticket with p
+    Eq(verify(sig,ep,pkP),true), //ensure the encounter proof is correctly signed
 ]->
 [ 
 ]
@@ -127,7 +136,7 @@ exists-trace
     & 
     Recv(p, m, n)@j
     &
-    VerifierAgree(v,p,<m, n, ticket>)@k
+    VerifierAgree(v,p,ticket)@k
 "
 
 /*
@@ -135,9 +144,28 @@ V claims non-injective agreement with P on
 the ticket
 */
 lemma noninjective_agreement:
-"All v p m n ticket #i.
-    VerifierAgree(v,p,<m, n, ticket>) @i
-        ==> (Ex #j. ProverAgree(p,v,<m, n, ticket>) @j)
+"All v p ticket #i.
+    VerifierAgree(v,p,ticket) @i
+        ==> (Ex #j. ProverAgree(p,v,ticket) @j)
  "
+
+/*
+Secrecy claim on the access ticket
+*/
+lemma secrecy:
+  "All x #i.
+    Secret(x) @i ==> not (Ex #j. K(x)@j)"
+
+
+/* Secure Channel Rules */
+rule ChanOut_S:
+[ Out_S($A,$B,x) ]
+--[ ChanOut_S($A,$B,x) ]->
+[ !Sec($A,$B,x) ]
+
+rule ChanIn_S:
+[ !Sec($A,$B,x) ]
+--[ ChanIn_S($A,$B,x) ]->
+[ In_S($A,$B,x) ]
 
 end
