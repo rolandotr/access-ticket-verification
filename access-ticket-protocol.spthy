@@ -88,7 +88,7 @@ in
 ]
 --[ 
     Recv(p, m, n),     //signal that p received nonce m and responded with n
-    ProverAgree(p,v,ticket), //signal the p expects agreement on ticket with v 
+    Running(p,v,ep), //signal the p expects agreement on ticket with v 
     Eq(verify(sig,da,pkV),true), //ensure that the detection announcement is correctly signed. 
     Secret(ticket), //signal the ticket should remain secret
 ]->
@@ -114,7 +114,8 @@ in
     In_S(p, v, <ep, sig>) // and the reception of a encounter proof
 ]
 --[
-    VerifierAgree(v,p,ticket),  //signal that v agrees on ticket with p
+    VerifiedTicket(v,p,ticket),  //signal that v agrees on ticket with p
+    Commit(v,p,ep),  //signal that v agrees on ticket with p
     Eq(verify(sig,ep,pkP),true), //ensure the encounter proof is correctly signed
 ]->
 [ 
@@ -136,7 +137,7 @@ exists-trace
     & 
     Recv(p, m, n)@j
     &
-    VerifierAgree(v,p,ticket)@k
+    VerifiedTicket(v,p,ticket)@k
 "
 
 /*
@@ -144,9 +145,9 @@ V claims non-injective agreement with P on
 the ticket
 */
 lemma noninjective_agreement:
-"All v p ticket #i.
-    VerifierAgree(v,p,ticket) @i
-        ==> (Ex #j. ProverAgree(p,v,ticket) @j)
+"All acv v ep #i.
+    Commit(acv,v,ep) @i
+        ==> (Ex #j. Running(v,acv,ep) @j)
  "
 
 /*
